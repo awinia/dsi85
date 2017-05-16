@@ -55,7 +55,7 @@
 
 #include <video/mipi_display.h>
 
-#include "sn65dsi85-registers.h"
+#include "dsi85_registers.h"
 
 #define SN65DSI85_MODULE_NAME "bridge-sn65dsi85"
 
@@ -90,81 +90,6 @@ static inline struct sn65dsi85_device *bridge_to_sn65dsi85(struct drm_bridge *br
 static inline struct sn65dsi85_device *connector_to_sn65dsi85(struct drm_connector *connector)
 {
 	return container_of(connector, struct sn65dsi85_device, connector);
-}
-
-
-static const struct _cfg_reg
-{
-	uint8_t reg;
-	uint8_t val;
-} cfg_reg[] =
-{
-	{0x09, 0x01}, // soft reset
-	{0x0D, 0x00}, // pll disable
-
-	{0x09, 0x00},
-	{0x0A, 0x05},
-	{0x0B, 0x28},
-	{0x0D, 0x00},
-	{0x10, 0x26},
-	{0x11, 0x00},
-	{0x12, 0x5d},
-	{0x13, 0x00},
-	{0x18, 0x6c},
-	{0x19, 0x00},
-	{0x1A, 0x03},
-	{0x1B, 0x00},
-	{0x20, 0x80},
-	{0x21, 0x07},
-	{0x22, 0x00},
-	{0x23, 0x00},
-	{0x24, 0x00},
-	{0x25, 0x00},
-	{0x26, 0x00},
-	{0x27, 0x00},
-	{0x28, 0x21},
-	{0x29, 0x00},
-	{0x2A, 0x00},
-	{0x2B, 0x00},
-	{0x2C, 0x2c},
-	{0x2D, 0x00},
-	{0x2E, 0x00},
-	{0x2F, 0x00},
-	{0x30, 0x0f},
-	{0x31, 0x00},
-	{0x32, 0x00},
-	{0x33, 0x00},
-	{0x34, 0x30},
-	{0x35, 0x00},
-	{0x36, 0x00},
-	{0x37, 0x00},
-	{0x38, 0x00},
-	{0x39, 0x00},
-	{0x3A, 0x00},
-	{0x3B, 0x00},
-	{0x3C, 0x00},
-	{0x3D, 0x00},
-	{0x3E, 0x00},
-
-	{0x0D, 0x01}, // pll enable
-	{0x09, 0x01}, // soft reset
-	{}
-};
-
-static int dsi85_hardcoded_init(struct i2c_client* client, const struct i2c_device_id* id)
-{
-	int i;
-        printk(KERN_INFO "Das ist der verbesserte Treiber\n");
-
-	for (i = 0; cfg_reg[i].reg != 0x00; i++)
-	{
-		if (i2c_smbus_write_byte_data(client, cfg_reg[i].reg, cfg_reg[i].val) < 0)
-		{
-			return -1;
-		}
-	}
-
-	return 0;
 }
 
 static int dsi85_hardcoded_deinit(struct i2c_client* client)
@@ -285,9 +210,10 @@ static void sn65dsi85_bridge_enable(struct drm_bridge* bridge)
 	int res;
 	dev_dbg(bridge->dev->dev, "%s entry", __func__);
 
-	dev_info(bridge->dev->dev, "Time for hardcoded init");
-	dsi85_hardcoded_init(self->i2c, self->i2c_id);
-	dev_info(bridge->dev->dev, "Done hardcoded init");
+	dev_info(bridge->dev->dev, "%s: time for PLL-Enable", __func__);
+	i2c_smbus_write_byte_data(self->i2c, 0x0D, 0x01);
+	i2c_smbus_write_byte_data(self->i2c, 0x09, 0x01);			
+	dev_info(bridge->dev->dev, "%s: PLL-Enable done", __func__);
 
 	res = drm_panel_enable(self->panel);
 	if (res) {
@@ -440,11 +366,354 @@ static int sn65dsi85_bridge_attach(struct drm_bridge* bridge)
 
 	return ret;
 }
+
+static inline void write_dsi85(struct i2c_client *i2c, u8 reg, u8 value)
+{
+	int res;
+	res = i2c_smbus_write_byte_data(i2c, reg, value);
+	dev_dbg(&i2c->dev, "write reg 0x%X <- 0x%X (res=%d)", reg, value, res);
+	if(res < 0) {
+		dev_err(&i2c->dev, "could not write DSI85 register 0x%x, i2c error %d", reg, res);
+	}
+}
+
+static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
+				struct drm_display_mode *mode)
+{
+	struct i2c_client *i2c = self->i2c;
+	u8 val;
+
+	struct sn65dsi85_regs {
+		u8 pll_en_stat;
+		u8 lvds_clk_range;
+		u8 hs_clk_src;
+		u8 dsi_clk_divider;
+		u8 refclk_multiplier;
+
+		u8 left_right_pixels;
+		u8 dsi_channel_mode;
+		u8 cha_dsi_lanes;
+		u8 chb_dsi_lanes;
+		u8 sot_err_tol_dis;
+		u8 cha_dsi_data_eq;
+		u8 chb_dsi_data_eq;
+		u8 cha_dsi_clk_eq;
+		u8 chb_dsi_clk_eq;
+
+		u8 cha_dsi_clk_rng;
+		u8 chb_dsi_clk_rng;
+
+		u8 de_neg_polarity;
+		u8 hs_neg_polarity;
+		u8 vs_neg_polarity;
+		u8 lvds_link_cfg;
+		u8 cha_24bpp_mode;
+		u8 chb_24bpp_mode;
+		u8 cha_24bpp_format1;
+		u8 chb_24bpp_format1;
+
+		u8 cha_lvds_vocm;
+		u8 chb_lvds_vocm;
+		u8 cha_lvds_vod_swing;
+		u8 chb_lvds_vod_swing;
+
+		u8 even_odd_swap;
+		u8 cha_reverse_lvds;
+		u8 chb_reverse_lvds;
+		u8 cha_lvds_term;
+		u8 chb_lvds_term;
+
+		u16 cha_active_line_length;
+		u16 chb_active_line_length;
+
+		u16 cha_sync_delay;
+		u16 chb_sync_delay;
+
+		u16 cha_hsync_pulse_width;
+		u16 chb_hsync_pulse_width;
+		
+		u16 cha_vsync_pulse_width;
+		u16 chb_vsync_pulse_width;
+		
+		u8 cha_horizontal_back_porch;
+		u8 chb_horizontal_back_porch;
+
+		/* omitted: TPG-related */
+	} regs = {
+		.pll_en_stat = 0,
+		.lvds_clk_range = 0,
+		.hs_clk_src = 1, /* LVDS pixel clock derived from MIPI D-PHY channel A HS continuous clock */
+
+		.dsi_clk_divider = 10,
+		.refclk_multiplier = 0,
+
+		.left_right_pixels = 0,
+		.dsi_channel_mode = 1, /* single channel DSI receiver */
+		.cha_dsi_lanes = 0,    /* four lanes A */
+		.chb_dsi_lanes = 0x3,  /* one lane B (default) */
+		.sot_err_tol_dis = 0,  /* tolerate single bit errors for SoT leader sequence */
+
+		.cha_dsi_data_eq = 0,
+		.chb_dsi_data_eq = 0,
+
+		.cha_dsi_clk_eq = 0,
+		.chb_dsi_clk_eq = 0,		
+		.cha_dsi_clk_rng = 0x5D, /* Magic? TODO */
+		.chb_dsi_clk_rng = 0,
+		
+		.de_neg_polarity = 0,
+		.hs_neg_polarity = 1,
+		.vs_neg_polarity = 1,
+		.lvds_link_cfg = 0, /* enable channel A and channel B */
+		.cha_24bpp_mode = 1, /* force 24bpp */
+		.chb_24bpp_mode = 1, /* force 24bpp */
+		.cha_24bpp_format1 = 0, /* use format2 */
+		.chb_24bpp_format1 = 0, /* use format2 */
+
+		.cha_lvds_vocm = 0,
+		.chb_lvds_vocm = 0,
+		.cha_lvds_vod_swing = 0,
+		.chb_lvds_vod_swing = 0,
+
+		.even_odd_swap = 0,
+		.cha_reverse_lvds = 0,
+		.chb_reverse_lvds = 0,
+		.cha_lvds_term = 1, /* terminate */
+		.chb_lvds_term = 1,
+
+		.cha_active_line_length = mode->hdisplay,
+		.chb_active_line_length = 0,
+		
+		.cha_sync_delay = 33, /* Magic? TODO */
+		.chb_sync_delay = 0,
+		
+		.cha_hsync_pulse_width = mode->hsync_end - mode->hsync_start,
+		.chb_hsync_pulse_width = 0,
+		
+		.cha_vsync_pulse_width = mode->vsync_end - mode->vsync_start,
+		.chb_vsync_pulse_width = 0,
+
+		.cha_horizontal_back_porch = mode->hsync_start - mode->hdisplay,
+		.chb_horizontal_back_porch = 0,
+
+	};
+
+	/* Adjust those defaults */
+	if (mode->clock <= 37500) {
+		/* use 0 */
+	}
+	else if (mode->clock <= 62500) {
+		regs.lvds_clk_range = 0x01;
+	}
+	else if (mode->clock <= 87500){
+		regs.lvds_clk_range = 0x02;
+	}
+	else if (mode->clock <= 112500)	{
+		regs.lvds_clk_range = 0x03;
+	}
+	else if (mode->clock <= 137500) {
+		regs.lvds_clk_range = 0x04;
+	}
+	else {
+		regs.lvds_clk_range = 0x05;
+	}
+
+	/* PFUSCH */
+	/* These registers are still off from the hard-coded reference */
+	regs.lvds_clk_range = 2;
+	regs.cha_hsync_pulse_width = 44;
+	regs.cha_horizontal_back_porch = 48;
+	/* /PFUSCH */
+
+
+	/* Soft reset and disable PLL */
+	write_dsi85(i2c,  DSI85_SOFT_RESET, 1 );
+	write_dsi85(i2c,  DSI85_PLL_EN, 0 );
+
+	/* ------- CORE_PLL register ------- */
+	write_dsi85(i2c,  DSI85_CORE_PLL, 
+			     ((regs.pll_en_stat & 0x01) << 7)
+			     | ((regs.lvds_clk_range & 0x07) << 1)
+			     | ((regs.hs_clk_src & 0x01) << 0 ));
+
+	/* ------- PLL_DIV register ------- */
+	write_dsi85(i2c,  DSI85_PLL_DIV, 
+			     (regs.dsi_clk_divider << 2) 
+			     | (regs.refclk_multiplier & 0x3) );
+
+	/* ------- DSI ------- */
+	write_dsi85(i2c,  DSI85_DSI_CFG, 
+			     ((regs.left_right_pixels & 0x01) << 7)
+			     | ((regs.dsi_channel_mode & 0x03) << 5)
+			     | ((regs.cha_dsi_lanes & 0x03) << 3)
+			     | ((regs.chb_dsi_lanes & 0x03) << 1)
+			     | ((regs.sot_err_tol_dis) << 0));
+	write_dsi85(i2c,  DSI85_DSI_EQ,
+			     ((regs.cha_dsi_data_eq & 0x03) << 6)
+			     | ((regs.chb_dsi_data_eq & 0x03) << 4)
+			     | ((regs.cha_dsi_clk_eq & 0x03) << 2)
+			     | ((regs.chb_dsi_clk_eq & 0x03) << 0));
+	write_dsi85(i2c,  DSI85_CHA_DSI_CLK_RNG,
+			     regs.cha_dsi_clk_rng);
+	write_dsi85(i2c,  DSI85_CHB_DSI_CLK_RNG,
+			     regs.chb_dsi_clk_rng);
+	
+	/* ------- LVDS ------- */
+
+	write_dsi85(i2c,  DSI85_LVDS_MODE,
+			     ((regs.de_neg_polarity & 0x01) << 7)
+			     | ((regs.hs_neg_polarity & 0x01) << 6)
+			     | ((regs.vs_neg_polarity & 0x01) << 5)
+			     | ((regs.lvds_link_cfg   & 0x01) << 4)
+			     | ((regs.cha_24bpp_mode  & 0x01) << 3)
+			     | ((regs.chb_24bpp_mode  & 0x01) << 2)
+			     | ((regs.cha_24bpp_format1  & 0x01) << 1)
+			     | ((regs.chb_24bpp_format1  & 0x01) << 0));
+	write_dsi85(i2c,  DSI85_LVDS_SIGN,
+			     ((regs.cha_lvds_vocm & 0x01) << 6)
+			     | ((regs.chb_lvds_vocm & 0x01) << 4)
+			     | ((regs.cha_lvds_vod_swing & 0x03) << 2)
+			     | ((regs.chb_lvds_vod_swing & 0x03) << 0));
+	write_dsi85(i2c,  DSI85_LVDS_TERM,
+			     ((regs.even_odd_swap & 0x01) << 6)
+			     | ((regs.cha_reverse_lvds & 0x01) << 5)
+			     | ((regs.chb_reverse_lvds & 0x01) << 4)
+			     | ((regs.cha_lvds_term & 0x01) << 1)
+			     | ((regs.chb_lvds_term & 0x01) << 0));
+	write_dsi85(i2c,  DSI85_LVDS_ADJUST, 0 ); /* TPG only */
+	
+	/* ------- Dimensions ------- */
+	write_dsi85(i2c,  DSI85_CHA_LINE_LEN_LO, 
+			     (u8)(regs.cha_active_line_length & 0x00ffu));
+	write_dsi85(i2c,  DSI85_CHA_LINE_LEN_HI, 
+			     (u8)((regs.cha_active_line_length & 0x0f00u) >> 8));
+	write_dsi85(i2c,  DSI85_CHB_LINE_LEN_LO, 
+			     (u8)(regs.chb_active_line_length & 0x00ffu));
+	write_dsi85(i2c,  DSI85_CHB_LINE_LEN_HI, 
+			     (u8)((regs.chb_active_line_length & 0x0f00u) >> 8));
+
+	write_dsi85(i2c,  DSI85_CHA_VERT_LINES_LO, 0 ); /* TPG only */
+	write_dsi85(i2c,  DSI85_CHA_VERT_LINES_HI, 0 );
+	write_dsi85(i2c,  DSI85_CHB_VERT_LINES_LO, 0 );
+	write_dsi85(i2c,  DSI85_CHB_VERT_LINES_HI, 0 );
+
+	write_dsi85(i2c,  DSI85_CHA_SYNC_DELAY_LO, 
+			     (u8)(regs.cha_sync_delay & 0x00ffu));
+	write_dsi85(i2c,  DSI85_CHA_SYNC_DELAY_HI, 
+			     (u8)((regs.cha_sync_delay & 0x0f00u) >> 8));
+	write_dsi85(i2c,  DSI85_CHB_SYNC_DELAY_LO, 
+			     (u8)(regs.chb_sync_delay & 0x00ffu));
+	write_dsi85(i2c,  DSI85_CHB_SYNC_DELAY_HI, 
+			     (u8)((regs.chb_sync_delay & 0x0f00u) >> 8));
+
+	write_dsi85(i2c,  DSI85_CHA_HSYNC_WIDTH_LO, 
+			     (u8)(regs.cha_hsync_pulse_width & 0x00ffu));
+	write_dsi85(i2c,  DSI85_CHA_HSYNC_WIDTH_HI, 
+			     (u8)((regs.cha_hsync_pulse_width & 0x0f00u) >> 8));
+	write_dsi85(i2c,  DSI85_CHB_HSYNC_WIDTH_LO, 
+			     (u8)(regs.chb_hsync_pulse_width & 0x00ffu));
+	write_dsi85(i2c,  DSI85_CHB_HSYNC_WIDTH_HI, 
+			     (u8)((regs.chb_hsync_pulse_width & 0x0f00u) >> 8));
+
+	write_dsi85(i2c,  DSI85_CHA_VSYNC_WIDTH_LO, 
+			     (u8)(regs.cha_vsync_pulse_width & 0x00ffu));
+	write_dsi85(i2c,  DSI85_CHA_VSYNC_WIDTH_HI, 
+			     (u8)((regs.cha_vsync_pulse_width & 0x0f00u) >> 8));
+	write_dsi85(i2c,  DSI85_CHB_VSYNC_WIDTH_LO, 
+			     (u8)(regs.chb_vsync_pulse_width & 0x00ffu));
+	write_dsi85(i2c,  DSI85_CHB_VSYNC_WIDTH_HI, 
+			     (u8)((regs.chb_vsync_pulse_width & 0x0f00u) >> 8));
+
+	write_dsi85(i2c,  DSI85_CHA_HORZ_BACKPORCH, regs.cha_horizontal_back_porch );
+	write_dsi85(i2c,  DSI85_CHB_HORZ_BACKPORCH, regs.chb_horizontal_back_porch );
+
+	write_dsi85(i2c,  DSI85_CHA_VERT_BACKPORCH, 0 ); /* TPG only */
+	write_dsi85(i2c,  DSI85_CHB_VERT_BACKPORCH, 0 ); /* TPG only */
+	write_dsi85(i2c,  DSI85_CHA_HORZ_FRONTPORCH, 0 ); /* TPG only */
+	write_dsi85(i2c,  DSI85_CHB_HORZ_FRONTPORCH, 0 ); /* TPG only */
+	write_dsi85(i2c,  DSI85_CHA_HORZ_FRONTPORCH, 0 ); /* TPG only */
+	write_dsi85(i2c,  DSI85_CHB_VERT_FRONTPORCH, 0 ); /* TPG only */
+	
+}
+
+
 static void sn65dsi85_bridge_mode_set(struct drm_bridge *bridge,
 			 struct drm_display_mode *mode,
 			 struct drm_display_mode *adjusted_mode)
 {
+	int i;
+	int result;
+	struct sn65dsi85_device *self = bridge_to_sn65dsi85(bridge);
+
 	dev_dbg(bridge->dev->dev, "%s entry", __func__);
+	sn65dsi85_apply_mode(self, mode);
+
+#if 0	
+	static const struct reg_assignment
+		cfg_regs[] =
+{
+	{0x09, 0x01}, // soft reset
+	{0x0D, 0x00}, // pll disable
+
+	{0x09, 0x00}, // soft reset = 0
+	{0x0A, 0x05}, // CORE_PLL = 0x05: HS_CLK_SRC=1 (from MIPI), LVDS_CLK_RANGE=62.5MHz..87.5MHz
+	{0x0B, 0x28}, // PLL_DIV = 0x0B: DSI_CLK_DIVIDER=divide by 3, REFCLK_MULTIPLIER=mul by 4
+	{0x0D, 0x00}, // PLL_EN = 0: disabled
+	{0x10, 0x26}, // CSR: DSI_CFG = 0x26: Even-odd split; Single-channel DSI receiver(1); four lanes A; one lane B  ; no SoT bit errors tolerated
+	{0x11, 0x00}, // DSI_EQ = 0: no Equalization
+	{0x12, 0x5d}, // CHA_DSI_CLK_RNG = 0x5D: DSI channel A clock in range 465..470MHz
+	{0x13, 0x00}, // CHB_DSI_CLK_RNG = 0x00: reserved channel B clock
+	{0x18, 0x6c}, // LVDS_MODE = 0x6C: DE positive polarity; HS neg polarity; VS neg polarity; LVDS channels A and B enabled; LVDS ch A force 24bpp; LVDS ch B force 24bpp; LVDS ch A format 2; LVDS ch B format 2
+	{0x19, 0x00}, // LVDS_SIGN = 0: LVDS ch A 1.2V; LVDS ch B 1.2V; CHA VOD SWING 0; CHB VOD SWING 0; 
+	{0x1A, 0x03}, // LVDS_TERM = 0x03: LVDS ch A gets odd pixels; normal A pin order; normal B pin order; both termination enabled
+	{0x1B, 0x00}, // CHAB_LVDS_CM_ADJUST = 0: use common mode voltage
+	{0x20, 0x80}, // CHA_LINE_LEN_LO = 0x80: active horiz line 1920=0x780 pixels
+	{0x21, 0x07}, // CHA_LINE_LEN_HI = 0x07
+	{0x22, 0x00}, // CHB_LINE_LEN_LO = 0
+	{0x23, 0x00}, // CHB_LINE_LEN_HI = 0
+	{0x24, 0x00}, // CHA_VERT_LINES_LO = 0: TPG only
+	{0x25, 0x00}, // CHA_VERT_LINES_HI = 0
+	{0x26, 0x00}, // CHB_VERT_LINES_LO = 0
+	{0x27, 0x00}, // CHB_VERT_LINES_HI = 0
+	{0x28, 0x21}, // CHA_SYNC_DELAY_LOW = 0x21: delay pixel clock by 33 clocks
+	{0x29, 0x00},
+	{0x2A, 0x00}, 
+	{0x2B, 0x00},
+	{0x2C, 0x2c}, // CHA_HSYNC_PULSE_WIDTH_LOW: ch A hsync pulse width 0x2c=44 clocks
+	{0x2D, 0x00},
+	{0x2E, 0x00}, // CHB_HSYNC_PULSE_WIDTH_LOW: ch B hsync pulse width 0
+	{0x2F, 0x00},
+	{0x30, 0x0f}, // CHA_VSYNC_PULSE_WIDTH_LOW: ch A vsync pulse 15 lines
+	{0x31, 0x00},
+	{0x32, 0x00}, // CHB_VSYNC_PULSE_WIDTH_LOW: ch B vsync pulse 0 lines
+	{0x33, 0x00},
+	{0x34, 0x30}, // CHA_HORIZONTAL_BACK_PORCH: ch A 48 clocks backporch
+	{0x35, 0x00}, // CHB_HORIZONTAL_BACK_PORCH: ch B 0 clocks backporch
+	{0x36, 0x00}, // CHA_VERTICAL_BACK_PORCH: TPG only
+	{0x37, 0x00}, // CHB_VERTICAL_BACK_PORCH: TPG only
+	{0x38, 0x00}, // CHA_HORIZONTAL_FRONT_PORCH: TPG only
+	{0x39, 0x00}, // CHB_HORIZONTAL_FRONT_PORCH: TPG only
+	{0x3A, 0x00}, // CHA_VERTICAL_FRONT_PORCH: TPG only
+	{0x3B, 0x00}, // CHB_VERTICAL_FRONT_PORCH: TPG only
+	{0x3C, 0x00}, // CHA_TEST_PATTERN=0, CHB_TEST_PATTERN=0
+	{0x3D, 0x00}, // RIGHT_CROP = 0 (left-right only)
+	{0x3E, 0x00}, // LEFT_CROP = 0 (left-right only)
+};
+
+	dev_dbg(bridge->dev->dev, "%s Configuring the DSI85, except for PLL-Enable", __func__);
+
+	for (i = 0; cfg_regs[i].reg != 0x00; i++)
+	{
+		result = i2c_smbus_write_byte_data(self->i2c, cfg_regs[i].reg, 
+						   cfg_regs[i].val);
+		if (result < 0)
+		{
+			dev_err(bridge->dev->dev, "%s i2c write error at step %d: %d", __func__, i, result);
+			break;
+		}
+	}
+#endif //0
+	dev_dbg(bridge->dev->dev, "%s exit", __func__);
 }
 
 static const struct drm_bridge_funcs sn65dsi85_bridge_funcs = {
