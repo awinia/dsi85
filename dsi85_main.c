@@ -533,8 +533,8 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 		.chb_dsi_clk_rng = 0,
 		
 		.de_neg_polarity = 0,
-		.hs_neg_polarity = 1,
-		.vs_neg_polarity = 1,
+		.hs_neg_polarity = 0,
+		.vs_neg_polarity = 0,
 		.lvds_link_cfg = 0, /* enable channel A and channel B */
 		.cha_24bpp_mode = 1, /* force 24bpp */
 		.chb_24bpp_mode = 1, /* force 24bpp */
@@ -602,6 +602,14 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 	}
 	else {
 		regs.lvds_clk_range = 0x05;
+	}
+
+	/* Sync polarities */
+	if( (mode->flags & DRM_MODE_FLAG_NHSYNC) != 0 ) {
+		regs.hs_neg_polarity = 1;
+	}
+	if( (mode->flags & DRM_MODE_FLAG_NVSYNC) != 0 ) {
+		regs.vs_neg_polarity = 1;
 	}
 
 	/* Soft reset and disable PLL */
@@ -726,6 +734,21 @@ static void sn65dsi85_bridge_mode_set(struct drm_bridge *bridge,
 	DRM_DEV_DEBUG(bridge->dev->dev, "%s exit", __func__);
 }
 
+static bool sn65dsi85_bridge_mode_fixup(struct drm_bridge *bridge,
+			   const struct drm_display_mode *mode,
+			   struct drm_display_mode *adjusted_mode)
+{
+	/* The panel may request negative vsync and hsync, but please don't
+	 * tell the DSI host; we want the DSI host to transmit uniform polarity,
+	 * and sn65dsi85_apply_mode will tell the DSI85 what polarity to produce. */
+	if( mode->flags & (DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC) ) {
+		adjusted_mode->flags &= ~(DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC);
+		DRM_DEBUG("Clearing FLAG_NHSYNC and FLAG_NVSYNC for DSI");
+	}
+
+	return 1;
+}
+
 static const struct drm_bridge_funcs sn65dsi85_bridge_funcs = {
 	.pre_enable   = sn65dsi85_bridge_pre_enable,
 	.enable       = sn65dsi85_bridge_enable,
@@ -733,6 +756,7 @@ static const struct drm_bridge_funcs sn65dsi85_bridge_funcs = {
 	.post_disable = sn65dsi85_bridge_post_disable,
 	.attach       = sn65dsi85_bridge_attach,
 	.mode_set     = sn65dsi85_bridge_mode_set,
+	.mode_fixup   = sn65dsi85_bridge_mode_fixup,
 };
 
 /*
