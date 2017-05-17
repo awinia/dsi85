@@ -707,73 +707,61 @@ static void sn65dsi85_bridge_mode_set(struct drm_bridge *bridge,
 
 	dev_dbg(bridge->dev->dev, "%s entry", __func__);
 	sn65dsi85_apply_mode(self, mode);
-
-#if 0	
-	static const struct reg_assignment
-		cfg_regs[] =
-{
-	{0x09, 0x01}, // soft reset
-	{0x0D, 0x00}, // pll disable
-
-	{0x09, 0x00}, // soft reset = 0
-	{0x0A, 0x05}, // CORE_PLL = 0x05: HS_CLK_SRC=1 (from MIPI), LVDS_CLK_RANGE=62.5MHz..87.5MHz
-	{0x0B, 0x28}, // PLL_DIV = 0x0B: DSI_CLK_DIVIDER=divide by 3, REFCLK_MULTIPLIER=mul by 4
-	{0x0D, 0x00}, // PLL_EN = 0: disabled
-	{0x10, 0x26}, // CSR: DSI_CFG = 0x26: Even-odd split; Single-channel DSI receiver(1); four lanes A; one lane B  ; no SoT bit errors tolerated
-	{0x11, 0x00}, // DSI_EQ = 0: no Equalization
-	{0x12, 0x5d}, // CHA_DSI_CLK_RNG = 0x5D: DSI channel A clock in range 465..470MHz
-	{0x13, 0x00}, // CHB_DSI_CLK_RNG = 0x00: reserved channel B clock
-	{0x18, 0x6c}, // LVDS_MODE = 0x6C: DE positive polarity; HS neg polarity; VS neg polarity; LVDS channels A and B enabled; LVDS ch A force 24bpp; LVDS ch B force 24bpp; LVDS ch A format 2; LVDS ch B format 2
-	{0x19, 0x00}, // LVDS_SIGN = 0: LVDS ch A 1.2V; LVDS ch B 1.2V; CHA VOD SWING 0; CHB VOD SWING 0; 
-	{0x1A, 0x03}, // LVDS_TERM = 0x03: LVDS ch A gets odd pixels; normal A pin order; normal B pin order; both termination enabled
-	{0x1B, 0x00}, // CHAB_LVDS_CM_ADJUST = 0: use common mode voltage
-	{0x20, 0x80}, // CHA_LINE_LEN_LO = 0x80: active horiz line 1920=0x780 pixels
-	{0x21, 0x07}, // CHA_LINE_LEN_HI = 0x07
-	{0x22, 0x00}, // CHB_LINE_LEN_LO = 0
-	{0x23, 0x00}, // CHB_LINE_LEN_HI = 0
-	{0x24, 0x00}, // CHA_VERT_LINES_LO = 0: TPG only
-	{0x25, 0x00}, // CHA_VERT_LINES_HI = 0
-	{0x26, 0x00}, // CHB_VERT_LINES_LO = 0
-	{0x27, 0x00}, // CHB_VERT_LINES_HI = 0
-	{0x28, 0x21}, // CHA_SYNC_DELAY_LOW = 0x21: delay pixel clock by 33 clocks
-	{0x29, 0x00},
-	{0x2A, 0x00}, 
-	{0x2B, 0x00},
-	{0x2C, 0x2c}, // CHA_HSYNC_PULSE_WIDTH_LOW: ch A hsync pulse width 0x2c=44 clocks
-	{0x2D, 0x00},
-	{0x2E, 0x00}, // CHB_HSYNC_PULSE_WIDTH_LOW: ch B hsync pulse width 0
-	{0x2F, 0x00},
-	{0x30, 0x0f}, // CHA_VSYNC_PULSE_WIDTH_LOW: ch A vsync pulse 15 lines
-	{0x31, 0x00},
-	{0x32, 0x00}, // CHB_VSYNC_PULSE_WIDTH_LOW: ch B vsync pulse 0 lines
-	{0x33, 0x00},
-	{0x34, 0x30}, // CHA_HORIZONTAL_BACK_PORCH: ch A 48 clocks backporch
-	{0x35, 0x00}, // CHB_HORIZONTAL_BACK_PORCH: ch B 0 clocks backporch
-	{0x36, 0x00}, // CHA_VERTICAL_BACK_PORCH: TPG only
-	{0x37, 0x00}, // CHB_VERTICAL_BACK_PORCH: TPG only
-	{0x38, 0x00}, // CHA_HORIZONTAL_FRONT_PORCH: TPG only
-	{0x39, 0x00}, // CHB_HORIZONTAL_FRONT_PORCH: TPG only
-	{0x3A, 0x00}, // CHA_VERTICAL_FRONT_PORCH: TPG only
-	{0x3B, 0x00}, // CHB_VERTICAL_FRONT_PORCH: TPG only
-	{0x3C, 0x00}, // CHA_TEST_PATTERN=0, CHB_TEST_PATTERN=0
-	{0x3D, 0x00}, // RIGHT_CROP = 0 (left-right only)
-	{0x3E, 0x00}, // LEFT_CROP = 0 (left-right only)
-};
-
-	dev_dbg(bridge->dev->dev, "%s Configuring the DSI85, except for PLL-Enable", __func__);
-
-	for (i = 0; cfg_regs[i].reg != 0x00; i++)
-	{
-		result = i2c_smbus_write_byte_data(self->i2c, cfg_regs[i].reg, 
-						   cfg_regs[i].val);
-		if (result < 0)
-		{
-			dev_err(bridge->dev->dev, "%s i2c write error at step %d: %d", __func__, i, result);
-			break;
-		}
-	}
-#endif //0
 	dev_dbg(bridge->dev->dev, "%s exit", __func__);
+}
+
+static void debug_dump_crtc_params(struct drm_display_mode *mode)
+{
+	DRM_DEBUG_KMS("Modeline clock/crtcclock: %d/%d crtch: %d %d %d %d %d %d %d crtcv: %d %d %d %d %d %d\n",
+		      mode->clock, mode->crtc_clock,
+		      mode->crtc_hdisplay,
+		      mode->crtc_hblank_start,
+		      mode->crtc_hblank_end,
+		      mode->crtc_hsync_start,
+		      mode->crtc_hsync_end,
+		      mode->crtc_htotal,
+		      mode->crtc_hskew,
+		      mode->crtc_vdisplay,
+		      mode->crtc_vblank_start,
+		      mode->crtc_vblank_end,
+		      mode->crtc_vsync_start,
+		      mode->crtc_vsync_end,
+		      mode->crtc_vtotal);
+}
+
+static bool sn65dsi85_bridge_mode_fixup(struct drm_bridge *bridge,
+			   const struct drm_display_mode *mode,
+			   struct drm_display_mode *adjusted_mode)
+{
+	struct sn65dsi85_device *self = bridge_to_sn65dsi85(bridge);
+	int res;
+	bool mode_is_ok = 1;
+	dev_dbg(bridge->dev->dev, "%s entry", __func__);
+
+	dev_dbg(bridge->dev->dev, "%s modes are...\n", __func__);
+	drm_mode_debug_printmodeline(mode);
+	debug_dump_crtc_params(mode);
+	drm_mode_debug_printmodeline(adjusted_mode);
+	debug_dump_crtc_params(adjusted_mode);
+
+#if 0 // well that's something that does not work.
+	/*
+	 * Single-lane DSI with twice the clock expected by the display
+	 */
+	adjusted_mode->hdisplay      = 2 * mode->hdisplay;
+	adjusted_mode->hsync_start   = 2 * mode->hsync_start;
+	adjusted_mode->hsync_end     = 2 * mode->hsync_end;
+	adjusted_mode->htotal        = 2 * mode->htotal;
+	adjusted_mode->clock         = 2 * mode->clock;
+#endif
+	
+	
+	dev_dbg(bridge->dev->dev, "%s new adjusted_mode is...\n", __func__);
+	drm_mode_debug_printmodeline(adjusted_mode);
+	debug_dump_crtc_params(adjusted_mode);
+
+	dev_dbg(bridge->dev->dev, "%s exit %d", __func__, (int)mode_is_ok);
+	return mode_is_ok;
 }
 
 static const struct drm_bridge_funcs sn65dsi85_bridge_funcs = {
@@ -783,6 +771,7 @@ static const struct drm_bridge_funcs sn65dsi85_bridge_funcs = {
 	.post_disable = sn65dsi85_bridge_post_disable,
 	.attach       = sn65dsi85_bridge_attach,
 	.mode_set     = sn65dsi85_bridge_mode_set,
+	.mode_fixup   = sn65dsi85_bridge_mode_fixup,
 };
 
 /*
