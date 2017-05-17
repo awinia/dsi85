@@ -64,9 +64,11 @@
  */
 struct sn65dsi85_config {
 	/* see mipi_dsi_device */
-	unsigned int lanes; 
+	u32 lanes; 
 	enum mipi_dsi_pixel_format format;
 	unsigned long mode_flags;
+	
+	u32 lvds_channels;
 };
 
 /*
@@ -105,10 +107,13 @@ static int dsi85_hardcoded_deinit(struct i2c_client* client)
 static struct sn65dsi85_config*
 sn65dsi85_get_pdata(struct i2c_client *client)
 {
+	struct device_node *dsi85_node = client->dev.of_node;
 	struct device_node *endpoint = NULL;
 	struct sn65dsi85_config *pdata = NULL;
 	
-	endpoint = of_graph_get_next_endpoint(client->dev.of_node, NULL);
+	dev_dbg(&client->dev, "Consulting DT node %s", dsi85_node->full_name);
+
+	endpoint = of_graph_get_next_endpoint(dsi85_node, NULL);
 	if(!endpoint) {
 		dev_err(&client->dev, "Cannot find OF endpoint\n");
 		return NULL;
@@ -117,14 +122,38 @@ sn65dsi85_get_pdata(struct i2c_client *client)
 	pdata = devm_kzalloc(&client->dev, sizeof(*pdata), GFP_KERNEL);
 	if(!pdata) {
 		dev_err(&client->dev, "Failed to kzalloc the config object");
-		goto done;
+		goto out_put_endpoint;
 	}
 
-	// TODO read number of lanes, bitformat etc.
+	/* read number of lanes etc */
+	if(of_property_read_u32(dsi85_node, "dsi-lanes", &pdata->lanes) < 0) {
+		dev_info(&client->dev, "DT: dsi-lanes property not found, using default\n");
+		pdata->lanes = 4;
+	}
+	if(of_property_read_u32(dsi85_node, "lvds-channels", &pdata->lvds_channels) < 0) {
+		dev_info(&client->dev, "DT: lvds-channels property not found, using default\n");
+		pdata->lvds_channels = 1;
+	} else {
+		if( pdata->lvds_channels < 1 || pdata->lvds_channels > 2 ) {
+			dev_err(&client->dev, "DT: lvds-channels must be 1 or 2, not %u", pdata->lvds_channels);
+			goto out_free;
+		}
+	}
 
-done:
+
+	dev_info(&client->dev, "DT attribute result: dsi-lanes=%d lvds-channels=%d",
+		 pdata->lanes, pdata->lvds_channels);
+	of_node_put(endpoint);
+	return pdata;
+
+out_free:
+	devm_kfree(&client->dev, pdata);
+	pdata = NULL;
+
+out_put_endpoint:
 	of_node_put(endpoint);
 	return pdata;	
+
 }
 
 static enum drm_connector_status sn65dsi85_connector_detect(struct drm_connector *connector,
@@ -281,10 +310,9 @@ int sn65dsi85_attach_dsi(struct sn65dsi85_device *self)
 	self->dsi = dsi;
 
 	/* In the simple driver, this was part of the panel_desc_dsi instance: */
-	dsi->lanes = 4;
-	dsi->format = MIPI_DSI_FMT_RGB888;
-	dsi->mode_flags = MIPI_DSI_MODE_VIDEO;
-	/* TODO get these params from my DT instead */
+	dsi->lanes = self->config->lanes;
+	dsi->format = MIPI_DSI_FMT_RGB888; /* maybe from DT later */
+	dsi->mode_flags = MIPI_DSI_MODE_VIDEO; /* maybe from DT later */
 
 	ret = mipi_dsi_attach(dsi);
 	if (ret < 0) {
@@ -377,11 +405,34 @@ static inline void write_dsi85(struct i2c_client *i2c, u8 reg, u8 value)
 	}
 }
 
+static inline u8 compute_dsi_clock_range_code_from_mode(struct drm_display_mode *mode, 
+							int bytes_per_pixel)
+{
+	/*
+	 * DSI85 wants to know the approximate DSI clock in 5MHz increments.
+	 */
+
+	int total_pixels_per_sec = mode->htotal * mode->vtotal * mode->vrefresh;
+	int dsi_clk = total_pixels_per_sec * bytes_per_pixel;
+	int dsi_clk_div5MHz = dsi_clk / 5000000; 
+	
+	if(8 <= dsi_clk_div5MHz && dsi_clk_div5MHz <= 0x64) {
+		return (u8) dsi_clk_div5MHz;
+	}
+	else {
+		DRM_ERROR("DSI clock out of range: %d pixels/s give clock %d, range %d out of range\n",
+			  total_pixels_per_sec, dsi_clk, dsi_clk_div5MHz);
+		return 0;
+	}
+}
+
 static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 				struct drm_display_mode *mode)
 {
 	struct i2c_client *i2c = self->i2c;
 	u8 val;
+	int lvds_clock;
+	bool lvds_clock_is_half_dsi_clock = (self->config->lvds_channels == 2);
 
 	struct sn65dsi85_regs {
 		u8 pll_en_stat;
@@ -458,7 +509,7 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 
 		.cha_dsi_clk_eq = 0,
 		.chb_dsi_clk_eq = 0,		
-		.cha_dsi_clk_rng = 0x5D, /* Magic? TODO */
+		.cha_dsi_clk_rng = compute_dsi_clock_range_code_from_mode(mode, 3),
 		.chb_dsi_clk_rng = 0,
 		
 		.de_neg_polarity = 0,
@@ -499,32 +550,41 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 	};
 
 	/* Adjust those defaults */
-	if (mode->clock <= 37500) {
+	if (lvds_clock_is_half_dsi_clock) {
+		lvds_clock = mode->clock / 2;
+		regs.cha_hsync_pulse_width /= 2;
+		regs.cha_horizontal_back_porch /= 2;
+	} else {
+		lvds_clock = mode->clock;
+	}
+	
+	if (lvds_clock <= 37500) {
 		/* use 0 */
 	}
-	else if (mode->clock <= 62500) {
+	else if (lvds_clock <= 62500) {
 		regs.lvds_clk_range = 0x01;
 	}
-	else if (mode->clock <= 87500){
+	else if (lvds_clock <= 87500){
 		regs.lvds_clk_range = 0x02;
 	}
-	else if (mode->clock <= 112500)	{
+	else if (lvds_clock <= 112500)	{
 		regs.lvds_clk_range = 0x03;
 	}
-	else if (mode->clock <= 137500) {
+	else if (lvds_clock <= 137500) {
 		regs.lvds_clk_range = 0x04;
 	}
 	else {
 		regs.lvds_clk_range = 0x05;
 	}
 
+#if 0
 	/* PFUSCH */
-	/* These registers are still off from the hard-coded reference */
+	/* These registers are still off from the hard-coded reference */	
 	regs.lvds_clk_range = 2;
 	regs.cha_hsync_pulse_width = 44;
 	regs.cha_horizontal_back_porch = 48;
 	/* /PFUSCH */
-
+#endif
 
 	/* Soft reset and disable PLL */
 	write_dsi85(i2c,  DSI85_SOFT_RESET, 1 );
