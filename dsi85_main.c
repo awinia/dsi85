@@ -68,10 +68,6 @@ struct sn65dsi85_config {
 	
 	u32 lvds_channels;
 
-	/* Derive LVDS clock from MIPI clock by dividing; this is the 
-	 * real divisor, not the (divisor-1) register value*/
-	u32 dsi_clock_divider;
-
 	/* Sync delay in LVDS clocks, see register CHA_SYNC_DELAY_LOW */
 	u32 sync_delay;
 };
@@ -205,18 +201,10 @@ sn65dsi85_get_pdata(struct i2c_client *client)
 			goto out_free;
 		}
 	}
-	if(0 == of_property_read_u32(dsi85_node, "dsi-clock-divider", &pdata->dsi_clock_divider)) {
-		if( pdata->dsi_clock_divider > 25 ) {
-			DRM_DEV_ERROR(&client->dev, "DT: dsi-clock-divider %d given, max is 25\n", 
-				pdata->dsi_clock_divider);
-			goto out_free;
-		}
-	}
 	of_property_read_u32(dsi85_node, "sync-delay", &pdata->sync_delay);
 
-	DRM_DEV_INFO(&client->dev, "DT attribute result: dsi-lanes=%d lvds-channels=%d"
-		 " dsi-clock-divider=%d sync-delay=%u",
-		 pdata->lanes, pdata->lvds_channels, pdata->dsi_clock_divider, pdata->sync_delay);
+	DRM_DEV_INFO(&client->dev, "DT attribute result: dsi-lanes=%d lvds-channels=%d sync-delay=%u",
+		 pdata->lanes, pdata->lvds_channels, pdata->sync_delay);
 	of_node_put(endpoint);
 	return pdata;
 
@@ -515,6 +503,7 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 		.pll_en_stat = 0,
 		.lvds_clk_range = 0,
 		.hs_clk_src = 1, /* LVDS pixel clock derived from MIPI D-PHY channel A HS continuous clock */
+		.dsi_clk_divider = lvds_clock_is_half_dsi_clock? 5: 2, /* divide by 6 or 3 for 24bpp */
 
 		.refclk_multiplier = 0,
 
@@ -570,11 +559,6 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 
 	/* ------- Decide about complicated register values... ------- */	
 
-	/* Derive LVDS clock from DSI clock by divider, but register needs (divisor-1) */
-	if (self->config->dsi_clock_divider > 0) {
-		regs.dsi_clk_divider = self->config->dsi_clock_divider - 1;
-	}
-
 	/* LVDS panel may need half of everything horizontal if using two LVDS channels */
 	if (lvds_clock_is_half_dsi_clock) {
 		lvds_clock = mode->clock / 2;
@@ -624,7 +608,7 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 
 	/* ------- PLL_DIV register ------- */
 	write_dsi85(i2c,  DSI85_PLL_DIV, 
-			     (regs.dsi_clk_divider << 2) 
+			     (regs.dsi_clk_divider << 3) 
 			     | (regs.refclk_multiplier & 0x3) );
 
 	/* ------- DSI ------- */
@@ -800,6 +784,7 @@ static int sn65dsi85_probe(struct i2c_client* c, const struct i2c_device_id *id)
 		host_node = of_graph_get_remote_port_parent(endpoint);
 		if (host_node) {
 			DRM_DEV_DEBUG(&c->dev, "%s my DSI host node: %s", __func__, host_node->full_name);
+			/* Store a pointer to the DT node because the DSI host may not be up yet */
 			ctx->dsi_host_node = host_node;
 		}
 		else {
