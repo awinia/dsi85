@@ -69,6 +69,13 @@ struct sn65dsi85_config {
 	unsigned long mode_flags;
 	
 	u32 lvds_channels;
+
+	/* Derive LVDS clock from MIPI clock by dividing; this is the 
+	 * real divisor, not the (divisor-1) register value*/
+	u32 dsi_clock_divider;
+
+	/* Sync delay in LVDS clocks, see register CHA_SYNC_DELAY_LOW */
+	u32 sync_delay;
 };
 
 /*
@@ -83,6 +90,67 @@ struct sn65dsi85_device {
 	struct drm_panel *panel;
 	struct device_node *dsi_host_node;
 	struct mipi_dsi_device *dsi;
+};
+
+/* Registers of the DSI85, named like in the data sheet.
+ * except for _LO/_HI pairs, which appear as one u16,
+ * and TPG-only registers, which are omitted. */
+struct sn65dsi85_regs {
+	u8 pll_en_stat;
+	u8 lvds_clk_range;
+	u8 hs_clk_src;
+	u8 dsi_clk_divider;
+	u8 refclk_multiplier;
+	
+	u8 left_right_pixels;
+	u8 dsi_channel_mode;
+	u8 cha_dsi_lanes;
+	u8 chb_dsi_lanes;
+	u8 sot_err_tol_dis;
+	u8 cha_dsi_data_eq;
+	u8 chb_dsi_data_eq;
+	u8 cha_dsi_clk_eq;
+	u8 chb_dsi_clk_eq;
+	
+	u8 cha_dsi_clk_rng;
+	u8 chb_dsi_clk_rng;
+	
+	u8 de_neg_polarity;
+	u8 hs_neg_polarity;
+	u8 vs_neg_polarity;
+	u8 lvds_link_cfg;
+	u8 cha_24bpp_mode;
+	u8 chb_24bpp_mode;
+	u8 cha_24bpp_format1;
+	u8 chb_24bpp_format1;
+
+	u8 cha_lvds_vocm;
+	u8 chb_lvds_vocm;
+	u8 cha_lvds_vod_swing;
+	u8 chb_lvds_vod_swing;
+	
+	u8 even_odd_swap;
+	u8 cha_reverse_lvds;
+	u8 chb_reverse_lvds;
+	u8 cha_lvds_term;
+	u8 chb_lvds_term;
+	
+	u16 cha_active_line_length;
+	u16 chb_active_line_length;
+	
+	u16 cha_sync_delay;
+	u16 chb_sync_delay;
+	
+	u16 cha_hsync_pulse_width;
+	u16 chb_hsync_pulse_width;
+	
+	u16 cha_vsync_pulse_width;
+	u16 chb_vsync_pulse_width;
+	
+	u8 cha_horizontal_back_porch;
+	u8 chb_horizontal_back_porch;
+	
+	/* omitted: TPG-related */
 };
 
 static inline struct sn65dsi85_device *bridge_to_sn65dsi85(struct drm_bridge *bridge)
@@ -125,7 +193,7 @@ sn65dsi85_get_pdata(struct i2c_client *client)
 		goto out_put_endpoint;
 	}
 
-	/* read number of lanes etc */
+	/* read DT attributes into Config */
 	if(of_property_read_u32(dsi85_node, "dsi-lanes", &pdata->lanes) < 0) {
 		dev_info(&client->dev, "DT: dsi-lanes property not found, using default\n");
 		pdata->lanes = 4;
@@ -139,14 +207,22 @@ sn65dsi85_get_pdata(struct i2c_client *client)
 			goto out_free;
 		}
 	}
+	if(0 == of_property_read_u32(dsi85_node, "dsi-clock-divider", &pdata->dsi_clock_divider)) {
+		if( pdata->dsi_clock_divider > 25 ) {
+			dev_err(&client->dev, "DT: dsi-clock-divider %d given, max is 25\n", 
+				pdata->dsi_clock_divider);
+			goto out_free;
+		}
+	}
+	of_property_read_u32(dsi85_node, "sync-delay", &pdata->sync_delay);
 
-
-	dev_info(&client->dev, "DT attribute result: dsi-lanes=%d lvds-channels=%d",
-		 pdata->lanes, pdata->lvds_channels);
+	dev_info(&client->dev, "DT attribute result: dsi-lanes=%d lvds-channels=%d"
+		 " dsi-clock-divider=%d sync-delay=%u",
+		 pdata->lanes, pdata->lvds_channels, pdata->dsi_clock_divider, pdata->sync_delay);
 	of_node_put(endpoint);
 	return pdata;
 
-out_free:
+out_free:			/* Sorry, DT node is invalid, bailing out. */
 	devm_kfree(&client->dev, pdata);
 	pdata = NULL;
 
@@ -426,76 +502,22 @@ static inline u8 compute_dsi_clock_range_code_from_mode(struct drm_display_mode 
 	}
 }
 
+/*
+ * Translate config and mode attributes to a complete DSI85 configuration,
+ * write them to registers.
+ */
 static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 				struct drm_display_mode *mode)
 {
 	struct i2c_client *i2c = self->i2c;
-	u8 val;
 	int lvds_clock;
 	bool lvds_clock_is_half_dsi_clock = (self->config->lvds_channels == 2);
 
-	struct sn65dsi85_regs {
-		u8 pll_en_stat;
-		u8 lvds_clk_range;
-		u8 hs_clk_src;
-		u8 dsi_clk_divider;
-		u8 refclk_multiplier;
-
-		u8 left_right_pixels;
-		u8 dsi_channel_mode;
-		u8 cha_dsi_lanes;
-		u8 chb_dsi_lanes;
-		u8 sot_err_tol_dis;
-		u8 cha_dsi_data_eq;
-		u8 chb_dsi_data_eq;
-		u8 cha_dsi_clk_eq;
-		u8 chb_dsi_clk_eq;
-
-		u8 cha_dsi_clk_rng;
-		u8 chb_dsi_clk_rng;
-
-		u8 de_neg_polarity;
-		u8 hs_neg_polarity;
-		u8 vs_neg_polarity;
-		u8 lvds_link_cfg;
-		u8 cha_24bpp_mode;
-		u8 chb_24bpp_mode;
-		u8 cha_24bpp_format1;
-		u8 chb_24bpp_format1;
-
-		u8 cha_lvds_vocm;
-		u8 chb_lvds_vocm;
-		u8 cha_lvds_vod_swing;
-		u8 chb_lvds_vod_swing;
-
-		u8 even_odd_swap;
-		u8 cha_reverse_lvds;
-		u8 chb_reverse_lvds;
-		u8 cha_lvds_term;
-		u8 chb_lvds_term;
-
-		u16 cha_active_line_length;
-		u16 chb_active_line_length;
-
-		u16 cha_sync_delay;
-		u16 chb_sync_delay;
-
-		u16 cha_hsync_pulse_width;
-		u16 chb_hsync_pulse_width;
-		
-		u16 cha_vsync_pulse_width;
-		u16 chb_vsync_pulse_width;
-		
-		u8 cha_horizontal_back_porch;
-		u8 chb_horizontal_back_porch;
-
-		/* omitted: TPG-related */
-	} regs = {
+	struct sn65dsi85_regs regs = {
 		.pll_en_stat = 0,
 		.lvds_clk_range = 0,
 		.hs_clk_src = 1, /* LVDS pixel clock derived from MIPI D-PHY channel A HS continuous clock */
 
-		.dsi_clk_divider = 10,
 		.refclk_multiplier = 0,
 
 		.left_right_pixels = 0,
@@ -535,7 +557,7 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 		.cha_active_line_length = mode->hdisplay,
 		.chb_active_line_length = 0,
 		
-		.cha_sync_delay = 33, /* Magic? TODO */
+		.cha_sync_delay = (u16)self->config->sync_delay,
 		.chb_sync_delay = 0,
 		
 		.cha_hsync_pulse_width = mode->hsync_end - mode->hsync_start,
@@ -546,10 +568,16 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 
 		.cha_horizontal_back_porch = mode->hsync_start - mode->hdisplay,
 		.chb_horizontal_back_porch = 0,
-
 	};
 
-	/* Adjust those defaults */
+	/* ------- Decide about complicated register values... ------- */	
+
+	/* Derive LVDS clock from DSI clock by divider, but register needs (divisor-1) */
+	if (self->config->dsi_clock_divider > 0) {
+		regs.dsi_clk_divider = self->config->dsi_clock_divider - 1;
+	}
+
+	/* LVDS panel may need half of everything horizontal if using two LVDS channels */
 	if (lvds_clock_is_half_dsi_clock) {
 		lvds_clock = mode->clock / 2;
 		regs.cha_hsync_pulse_width /= 2;
@@ -557,7 +585,8 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 	} else {
 		lvds_clock = mode->clock;
 	}
-	
+
+	/* Compute LVDS clock-range register; ranges from datasheet */
 	if (lvds_clock <= 37500) {
 		/* use 0 */
 	}
@@ -576,15 +605,6 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 	else {
 		regs.lvds_clk_range = 0x05;
 	}
-
-#if 0
-	/* PFUSCH */
-	/* These registers are still off from the hard-coded reference */	
-	regs.lvds_clk_range = 2;
-	regs.cha_hsync_pulse_width = 44;
-	regs.cha_horizontal_back_porch = 48;
-	/* /PFUSCH */
-#endif
 
 	/* Soft reset and disable PLL */
 	write_dsi85(i2c,  DSI85_SOFT_RESET, 1 );
@@ -701,8 +721,6 @@ static void sn65dsi85_bridge_mode_set(struct drm_bridge *bridge,
 			 struct drm_display_mode *mode,
 			 struct drm_display_mode *adjusted_mode)
 {
-	int i;
-	int result;
 	struct sn65dsi85_device *self = bridge_to_sn65dsi85(bridge);
 
 	dev_dbg(bridge->dev->dev, "%s entry", __func__);
