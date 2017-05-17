@@ -728,60 +728,6 @@ static void sn65dsi85_bridge_mode_set(struct drm_bridge *bridge,
 	dev_dbg(bridge->dev->dev, "%s exit", __func__);
 }
 
-static void debug_dump_crtc_params(struct drm_display_mode *mode)
-{
-	DRM_DEBUG_KMS("Modeline clock/crtcclock: %d/%d crtch: %d %d %d %d %d %d %d crtcv: %d %d %d %d %d %d\n",
-		      mode->clock, mode->crtc_clock,
-		      mode->crtc_hdisplay,
-		      mode->crtc_hblank_start,
-		      mode->crtc_hblank_end,
-		      mode->crtc_hsync_start,
-		      mode->crtc_hsync_end,
-		      mode->crtc_htotal,
-		      mode->crtc_hskew,
-		      mode->crtc_vdisplay,
-		      mode->crtc_vblank_start,
-		      mode->crtc_vblank_end,
-		      mode->crtc_vsync_start,
-		      mode->crtc_vsync_end,
-		      mode->crtc_vtotal);
-}
-
-static bool sn65dsi85_bridge_mode_fixup(struct drm_bridge *bridge,
-			   const struct drm_display_mode *mode,
-			   struct drm_display_mode *adjusted_mode)
-{
-	struct sn65dsi85_device *self = bridge_to_sn65dsi85(bridge);
-	int res;
-	bool mode_is_ok = 1;
-	dev_dbg(bridge->dev->dev, "%s entry", __func__);
-
-	dev_dbg(bridge->dev->dev, "%s modes are...\n", __func__);
-	drm_mode_debug_printmodeline(mode);
-	debug_dump_crtc_params(mode);
-	drm_mode_debug_printmodeline(adjusted_mode);
-	debug_dump_crtc_params(adjusted_mode);
-
-#if 0 // well that's something that does not work.
-	/*
-	 * Single-lane DSI with twice the clock expected by the display
-	 */
-	adjusted_mode->hdisplay      = 2 * mode->hdisplay;
-	adjusted_mode->hsync_start   = 2 * mode->hsync_start;
-	adjusted_mode->hsync_end     = 2 * mode->hsync_end;
-	adjusted_mode->htotal        = 2 * mode->htotal;
-	adjusted_mode->clock         = 2 * mode->clock;
-#endif
-	
-	
-	dev_dbg(bridge->dev->dev, "%s new adjusted_mode is...\n", __func__);
-	drm_mode_debug_printmodeline(adjusted_mode);
-	debug_dump_crtc_params(adjusted_mode);
-
-	dev_dbg(bridge->dev->dev, "%s exit %d", __func__, (int)mode_is_ok);
-	return mode_is_ok;
-}
-
 static const struct drm_bridge_funcs sn65dsi85_bridge_funcs = {
 	.pre_enable   = sn65dsi85_bridge_pre_enable,
 	.enable       = sn65dsi85_bridge_enable,
@@ -789,7 +735,6 @@ static const struct drm_bridge_funcs sn65dsi85_bridge_funcs = {
 	.post_disable = sn65dsi85_bridge_post_disable,
 	.attach       = sn65dsi85_bridge_attach,
 	.mode_set     = sn65dsi85_bridge_mode_set,
-	.mode_fixup   = sn65dsi85_bridge_mode_fixup,
 };
 
 /*
