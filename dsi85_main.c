@@ -22,8 +22,6 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#define DEBUG
-
 #include <linux/module.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
@@ -179,44 +177,44 @@ sn65dsi85_get_pdata(struct i2c_client *client)
 	struct device_node *endpoint = NULL;
 	struct sn65dsi85_config *pdata = NULL;
 	
-	dev_dbg(&client->dev, "Consulting DT node %s", dsi85_node->full_name);
+	DRM_DEV_DEBUG(&client->dev, "Consulting DT node %s", dsi85_node->full_name);
 
 	endpoint = of_graph_get_next_endpoint(dsi85_node, NULL);
 	if(!endpoint) {
-		dev_err(&client->dev, "Cannot find OF endpoint\n");
+		DRM_DEV_ERROR(&client->dev, "Cannot find OF endpoint\n");
 		return NULL;
 	}
 
 	pdata = devm_kzalloc(&client->dev, sizeof(*pdata), GFP_KERNEL);
 	if(!pdata) {
-		dev_err(&client->dev, "Failed to kzalloc the config object");
+		DRM_DEV_ERROR(&client->dev, "Failed to kzalloc the config object");
 		goto out_put_endpoint;
 	}
 
 	/* read DT attributes into Config */
 	if(of_property_read_u32(dsi85_node, "dsi-lanes", &pdata->lanes) < 0) {
-		dev_info(&client->dev, "DT: dsi-lanes property not found, using default\n");
+		DRM_DEV_INFO(&client->dev, "DT: dsi-lanes property not found, using default\n");
 		pdata->lanes = 4;
 	}
 	if(of_property_read_u32(dsi85_node, "lvds-channels", &pdata->lvds_channels) < 0) {
-		dev_info(&client->dev, "DT: lvds-channels property not found, using default\n");
+		DRM_DEV_INFO(&client->dev, "DT: lvds-channels property not found, using default\n");
 		pdata->lvds_channels = 1;
 	} else {
 		if( pdata->lvds_channels < 1 || pdata->lvds_channels > 2 ) {
-			dev_err(&client->dev, "DT: lvds-channels must be 1 or 2, not %u", pdata->lvds_channels);
+			DRM_DEV_ERROR(&client->dev, "DT: lvds-channels must be 1 or 2, not %u", pdata->lvds_channels);
 			goto out_free;
 		}
 	}
 	if(0 == of_property_read_u32(dsi85_node, "dsi-clock-divider", &pdata->dsi_clock_divider)) {
 		if( pdata->dsi_clock_divider > 25 ) {
-			dev_err(&client->dev, "DT: dsi-clock-divider %d given, max is 25\n", 
+			DRM_DEV_ERROR(&client->dev, "DT: dsi-clock-divider %d given, max is 25\n", 
 				pdata->dsi_clock_divider);
 			goto out_free;
 		}
 	}
 	of_property_read_u32(dsi85_node, "sync-delay", &pdata->sync_delay);
 
-	dev_info(&client->dev, "DT attribute result: dsi-lanes=%d lvds-channels=%d"
+	DRM_DEV_INFO(&client->dev, "DT attribute result: dsi-lanes=%d lvds-channels=%d"
 		 " dsi-clock-divider=%d sync-delay=%u",
 		 pdata->lanes, pdata->lvds_channels, pdata->dsi_clock_divider, pdata->sync_delay);
 	of_node_put(endpoint);
@@ -235,13 +233,13 @@ out_put_endpoint:
 static enum drm_connector_status sn65dsi85_connector_detect(struct drm_connector *connector,
 		bool force)
 {
-	dev_dbg(connector->dev->dev, "%s entry", __func__);
+	DRM_DEV_DEBUG(connector->dev->dev, "%s entry", __func__);
 	return connector_status_connected;
 }
 
 static void sn65dsi85_connector_destroy(struct drm_connector* connector)
 {
-	dev_dbg(connector->dev->dev, "%s entry", __func__);
+	DRM_DEV_DEBUG(connector->dev->dev, "%s entry", __func__);
 	drm_connector_cleanup(connector);
 }
 
@@ -267,7 +265,7 @@ static int sn65dsi85_get_modes(struct drm_connector* connector)
 {
 	struct sn65dsi85_device *self;
 	int num_modes = 0;
-	dev_dbg(connector->dev->dev, "%s entry connector=%p", __func__, connector);
+	DRM_DEV_DEBUG(connector->dev->dev, "%s entry connector=%p", __func__, connector);
 
 	if(!connector) {
 		pr_err("Null connector in sn65dsi85_get_modes");
@@ -278,14 +276,14 @@ static int sn65dsi85_get_modes(struct drm_connector* connector)
 	if (self->panel && self->panel->funcs && self->panel->funcs->get_modes) {
 		num_modes = self->panel->funcs->get_modes(self->panel);
 		if (num_modes > 0) {
-			dev_dbg(connector->dev->dev, "%s got %d modes from panel, good enough", __func__, num_modes);
+			DRM_DEV_DEBUG(connector->dev->dev, "%s got %d modes from panel, good enough", __func__, num_modes);
 		}
 		else {
-			dev_warn(connector->dev->dev, "%s got 0 modes from panel", __func__);
+			DRM_WARN("got 0 modes from panel");
 		}
 	}
 	else {
-		dev_warn(connector->dev->dev, "%s could not interrogate drm_panel for modes", __func__);
+		DRM_WARN("could not interrogate drm_panel for modes");
 	}
 
 	return num_modes;
@@ -300,7 +298,7 @@ static void sn65dsi85_bridge_pre_enable(struct drm_bridge* bridge)
 {
 	struct sn65dsi85_device *self = bridge_to_sn65dsi85(bridge);
 	int res;
-	dev_dbg(bridge->dev->dev, "%s entry", __func__);
+	DRM_DEV_DEBUG(bridge->dev->dev, "%s entry", __func__);
 
 	res = drm_panel_prepare(self->panel);
 	if (res) {
@@ -313,12 +311,12 @@ static void sn65dsi85_bridge_enable(struct drm_bridge* bridge)
 {
 	struct sn65dsi85_device *self = bridge_to_sn65dsi85(bridge);
 	int res;
-	dev_dbg(bridge->dev->dev, "%s entry", __func__);
+	DRM_DEV_DEBUG(bridge->dev->dev, "%s entry", __func__);
 
-	dev_info(bridge->dev->dev, "%s: time for PLL-Enable", __func__);
+	DRM_DEV_INFO(bridge->dev->dev, "%s: time for PLL-Enable", __func__);
 	i2c_smbus_write_byte_data(self->i2c, 0x0D, 0x01);
 	i2c_smbus_write_byte_data(self->i2c, 0x09, 0x01);			
-	dev_info(bridge->dev->dev, "%s: PLL-Enable done", __func__);
+	DRM_DEV_INFO(bridge->dev->dev, "%s: PLL-Enable done", __func__);
 
 	res = drm_panel_enable(self->panel);
 	if (res) {
@@ -330,11 +328,11 @@ static void sn65dsi85_bridge_disable(struct drm_bridge* bridge)
 {
 	struct sn65dsi85_device *self = bridge_to_sn65dsi85(bridge);
 	int res;
-	dev_dbg(bridge->dev->dev, "%s entry", __func__);
+	DRM_DEV_DEBUG(bridge->dev->dev, "%s entry", __func__);
 
-	dev_info(bridge->dev->dev, "Time for hardcoded deinit");
+	DRM_DEV_INFO(bridge->dev->dev, "Time for hardcoded deinit");
 	dsi85_hardcoded_deinit(self->i2c);
-	dev_info(bridge->dev->dev, "Done hardcoded deinit");
+	DRM_DEV_INFO(bridge->dev->dev, "Done hardcoded deinit");
 
 	res = drm_panel_disable(self->panel);
 	if (res) {
@@ -346,7 +344,7 @@ static void sn65dsi85_bridge_post_disable(struct drm_bridge* bridge)
 {
 	struct sn65dsi85_device *self = bridge_to_sn65dsi85(bridge);
 	int res;
-	dev_dbg(bridge->dev->dev, "%s entry", __func__);
+	DRM_DEV_DEBUG(bridge->dev->dev, "%s entry", __func__);
 
 	res = drm_panel_unprepare(self->panel);
 	if (res) {
@@ -371,7 +369,7 @@ int sn65dsi85_attach_dsi(struct sn65dsi85_device *self)
 
 	host = of_find_mipi_dsi_host_by_node(self->dsi_host_node);
 	if (!host) {
-		dev_err(dev, "%s failed to find dsi host by OF node %s\n", __func__,
+		DRM_DEV_ERROR(dev, "%s failed to find dsi host by OF node %s\n", __func__,
 			self->dsi_host_node? self->dsi_host_node->full_name : "null-OF-node");
 		return -EPROBE_DEFER;
 	}
@@ -379,7 +377,7 @@ int sn65dsi85_attach_dsi(struct sn65dsi85_device *self)
 	dsi = mipi_dsi_device_register_full(host, &info);
 	if (IS_ERR(dsi)) {
 		ret = PTR_ERR(dsi);
-		dev_err(dev, "%s failed to create dsi device: %d\n", __func__, ret);
+		DRM_DEV_ERROR(dev, "%s failed to create dsi device: %d\n", __func__, ret);
 		goto err_dsi_device;
 	}
 
@@ -392,7 +390,7 @@ int sn65dsi85_attach_dsi(struct sn65dsi85_device *self)
 
 	ret = mipi_dsi_attach(dsi);
 	if (ret < 0) {
-		dev_err(dev, "%s failed to attach dsi to host: %d\n", __func__, ret);
+		DRM_DEV_ERROR(dev, "%s failed to attach dsi to host: %d\n", __func__, ret);
 		goto err_dsi_attach;
 	}
 
@@ -422,7 +420,7 @@ static int sn65dsi85_bridge_attach(struct drm_bridge* bridge)
 	struct sn65dsi85_device* self = bridge_to_sn65dsi85(bridge);
 	int ret = 0;
 
-	dev_dbg(bridge->dev->dev, "%s entry", __func__);
+	DRM_DEV_DEBUG(bridge->dev->dev, "%s entry", __func__);
 
 	if(!bridge->encoder) {
 		DRM_ERROR("Bridge has no Encoder");
@@ -475,9 +473,9 @@ static inline void write_dsi85(struct i2c_client *i2c, u8 reg, u8 value)
 {
 	int res;
 	res = i2c_smbus_write_byte_data(i2c, reg, value);
-	dev_dbg(&i2c->dev, "write reg 0x%X <- 0x%X (res=%d)", reg, value, res);
+	DRM_DEV_DEBUG(&i2c->dev, "write reg 0x%X <- 0x%X (res=%d)", reg, value, res);
 	if(res < 0) {
-		dev_err(&i2c->dev, "could not write DSI85 register 0x%x, i2c error %d", reg, res);
+		DRM_DEV_ERROR(&i2c->dev, "could not write DSI85 register 0x%x, i2c error %d", reg, res);
 	}
 }
 
@@ -723,9 +721,9 @@ static void sn65dsi85_bridge_mode_set(struct drm_bridge *bridge,
 {
 	struct sn65dsi85_device *self = bridge_to_sn65dsi85(bridge);
 
-	dev_dbg(bridge->dev->dev, "%s entry", __func__);
+	DRM_DEV_DEBUG(bridge->dev->dev, "%s entry", __func__);
 	sn65dsi85_apply_mode(self, mode);
-	dev_dbg(bridge->dev->dev, "%s exit", __func__);
+	DRM_DEV_DEBUG(bridge->dev->dev, "%s exit", __func__);
 }
 
 static const struct drm_bridge_funcs sn65dsi85_bridge_funcs = {
@@ -752,17 +750,17 @@ static int sn65dsi85_probe(struct i2c_client* c, const struct i2c_device_id *id)
 	struct device_node *endpoint, *panel_node, *host_node;
 	int error_value = 0;
 
-	dev_info(&c->dev, "sn65dsi85_probe: welcome!\n");
+	DRM_DEV_INFO(&c->dev, "sn65dsi85_probe: welcome!\n");
 
 	pdata = sn65dsi85_get_pdata(c);
 	if(!pdata) {
-		dev_err(&c->dev, "Cannot read configuration. Probe failed.\n");
+		DRM_DEV_ERROR(&c->dev, "Cannot read configuration. Probe failed.\n");
 		return -EINVAL;
 	}
 
 	ctx = devm_kzalloc(&c->dev, sizeof(struct sn65dsi85_device), GFP_KERNEL);
 	if(!ctx) {
-		dev_err(&c->dev, "Cannot allocate device state\n");
+		DRM_DEV_ERROR(&c->dev, "Cannot allocate device state\n");
 		error_value = -ENOMEM;
 		goto fail_free_pdata;
 	}
@@ -774,18 +772,18 @@ static int sn65dsi85_probe(struct i2c_client* c, const struct i2c_device_id *id)
 	/* Find the associated DSI host. port@0 is input */
 	endpoint = of_graph_get_endpoint_by_regs(c->dev.of_node, 0, -1);
 	if (endpoint) {
-		dev_dbg(&c->dev, "%s my DSI-side endpoint: %s", __func__, endpoint->full_name);
+		DRM_DEV_DEBUG(&c->dev, "%s my DSI-side endpoint: %s", __func__, endpoint->full_name);
 		host_node = of_graph_get_remote_port_parent(endpoint);
 		if (host_node) {
-			dev_dbg(&c->dev, "%s my DSI host node: %s", __func__, host_node->full_name);
+			DRM_DEV_DEBUG(&c->dev, "%s my DSI host node: %s", __func__, host_node->full_name);
 			ctx->dsi_host_node = host_node;
 		}
 		else {
-			dev_err(&c->dev, "%s cannot find DSI host node", __func__);
+			DRM_DEV_ERROR(&c->dev, "%s cannot find DSI host node", __func__);
 		}
 	}
 	else {
-		dev_err(&c->dev, "%s cannot find endpoint 0 (towards DSI)", __func__);
+		DRM_DEV_ERROR(&c->dev, "%s cannot find endpoint 0 (towards DSI)", __func__);
 		error_value = -ENOENT;
 		goto fail_free_pdata;
 	}
@@ -793,12 +791,12 @@ static int sn65dsi85_probe(struct i2c_client* c, const struct i2c_device_id *id)
 	/* Find the associated panel. port@1 is output */
 	endpoint = of_graph_get_endpoint_by_regs(c->dev.of_node, 1, -1);
 	if (endpoint) {
-		dev_dbg(&c->dev, "%s my panel-side endpoint: %s", __func__, endpoint->full_name);
+		DRM_DEV_DEBUG(&c->dev, "%s my panel-side endpoint: %s", __func__, endpoint->full_name);
 		panel_node = of_graph_get_remote_port_parent(endpoint);
 		if (panel_node) {
 			ctx->panel = of_drm_find_panel(panel_node);
 			if (!ctx->panel) {
-				dev_warn(&c->dev, "Cannot find panel by panel node name=%s", 
+				DRM_WARN("Cannot find panel by panel node name=%s", 
 					 panel_node->full_name);
 				return -EPROBE_DEFER;
 			}
@@ -806,7 +804,7 @@ static int sn65dsi85_probe(struct i2c_client* c, const struct i2c_device_id *id)
 		}
 	}
 	else {
-		dev_err(&c->dev, "%s cannot find endpoint 1 (towards panel)", __func__);
+		DRM_DEV_ERROR(&c->dev, "%s cannot find endpoint 1 (towards panel)", __func__);
 		error_value = -ENOENT;
 		goto fail_free_pdata;
 	}
@@ -817,13 +815,13 @@ static int sn65dsi85_probe(struct i2c_client* c, const struct i2c_device_id *id)
 	error_value = drm_bridge_add(&ctx->bridge);
 	(void)error_value; // "Unconditionally returns zero"
 
-        dev_info(&c->dev, "sn65dsi85_probe: done!\n");
+        DRM_DEV_INFO(&c->dev, "sn65dsi85_probe: done!\n");
 
 	return 0;
 
 fail_free_pdata:
 	kfree(pdata);
-        dev_info(&c->dev, "sn65dsi85_probe: err=%d :(\n", error_value);
+        DRM_DEV_INFO(&c->dev, "sn65dsi85_probe: err=%d :(\n", error_value);
 	return error_value;
 	
 }
@@ -835,7 +833,7 @@ fail_free_pdata:
 static int sn65dsi85_remove(struct i2c_client *c)
 {
 	struct sn65dsi85_device *ctx = i2c_get_clientdata(c);
-	dev_dbg(&c->dev, "%s entry", __func__);
+	DRM_DEV_DEBUG(&c->dev, "%s entry", __func__);
 
 	if(ctx->dsi) {
 		sn65dsi85_detach_dsi(ctx);
@@ -843,7 +841,7 @@ static int sn65dsi85_remove(struct i2c_client *c)
 
 	drm_bridge_remove(&ctx->bridge);
 	
-	dev_dbg(&c->dev, "%s exit", __func__);
+	DRM_DEV_DEBUG(&c->dev, "%s exit", __func__);
 	return 0;
 }
 
