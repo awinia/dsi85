@@ -58,18 +58,24 @@
 #define SN65DSI85_MODULE_NAME "bridge-sn65dsi85"
 
 /* Config struct
- * (to be filled from DT)
+ * (to be filled from DT. See dsi85.txt.)
  */
 struct sn65dsi85_config {
-	/* see mipi_dsi_device */
 	u32 lanes; 
-	enum mipi_dsi_pixel_format format;
-	unsigned long mode_flags;
-	
 	u32 lvds_channels;
-
-	/* Sync delay in LVDS clocks, see register CHA_SYNC_DELAY_LOW */
 	u32 sync_delay;
+		
+	u32 de_neg_polarity;
+	u32 force_24bpp_mode;
+	u32 force_24bpp_format1;
+	u32 lvds_vocm;
+	u32 lvds_vod_swing_cha;
+	u32 lvds_vod_swing_chb;
+	u32 lvds_even_odd_swap;
+	u32 lvds_reverse;
+	u32 lvds_term;
+	u32 lvds_cm_adjust_cha;
+	u32 lvds_cm_adjust_chb;
 };
 
 /*
@@ -128,6 +134,9 @@ struct sn65dsi85_regs {
 	u8 chb_reverse_lvds;
 	u8 cha_lvds_term;
 	u8 chb_lvds_term;
+
+	u8 cha_lvds_cm_adjust;
+	u8 chb_lvds_cm_adjust;
 	
 	u16 cha_active_line_length;
 	u16 chb_active_line_length;
@@ -202,6 +211,18 @@ sn65dsi85_get_pdata(struct i2c_client *client)
 		}
 	}
 	of_property_read_u32(dsi85_node, "sync-delay", &pdata->sync_delay);
+
+	of_property_read_u32(dsi85_node, "de-neg-polarity", &pdata->de_neg_polarity);
+	of_property_read_u32(dsi85_node, "force-24bpp-mode", &pdata->force_24bpp_mode);
+	of_property_read_u32(dsi85_node, "force-24bpp-format1", &pdata->force_24bpp_format1);
+	of_property_read_u32(dsi85_node, "lvds-vocm", &pdata->lvds_vocm);
+	of_property_read_u32(dsi85_node, "lvds-vod-swing-cha", &pdata->lvds_vod_swing_cha);
+	of_property_read_u32(dsi85_node, "lvds-vod-swing-chb", &pdata->lvds_vod_swing_chb);
+	of_property_read_u32(dsi85_node, "lvds-even-odd-swap", &pdata->lvds_even_odd_swap);
+	of_property_read_u32(dsi85_node, "lvds-reverse", &pdata->lvds_reverse);
+	of_property_read_u32(dsi85_node, "lvds-term", &pdata->lvds_term);
+	of_property_read_u32(dsi85_node, "lvds-cm-adjust-cha", &pdata->lvds_cm_adjust_cha);
+	of_property_read_u32(dsi85_node, "lvds-cm-adjust-chb", &pdata->lvds_cm_adjust_chb);
 
 	DRM_DEV_INFO(&client->dev, "DT attribute result: dsi-lanes=%d lvds-channels=%d sync-delay=%u",
 		 pdata->lanes, pdata->lvds_channels, pdata->sync_delay);
@@ -498,6 +519,7 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 	struct i2c_client *i2c = self->i2c;
 	int lvds_clock;
 	bool lvds_clock_is_half_dsi_clock = (self->config->lvds_channels == 2);
+	struct sn65dsi85_config* dt = self->config;
 
 	struct sn65dsi85_regs regs = {
 		.pll_en_stat = 0,
@@ -521,30 +543,33 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 		.cha_dsi_clk_rng = compute_dsi_clock_range_code_from_mode(mode, 3),
 		.chb_dsi_clk_rng = 0,
 		
-		.de_neg_polarity = 0,
-		.hs_neg_polarity = 0,
+		.de_neg_polarity = !!dt->de_neg_polarity,
+		.hs_neg_polarity = 0, /* from Panel, see below */
 		.vs_neg_polarity = 0,
-		.lvds_link_cfg = 0, /* enable channel A and channel B */
-		.cha_24bpp_mode = 1, /* force 24bpp */
-		.chb_24bpp_mode = 1, /* force 24bpp */
-		.cha_24bpp_format1 = 0, /* use format2 */
-		.chb_24bpp_format1 = 0, /* use format2 */
+		.lvds_link_cfg = (dt->lvds_channels==2)?0:1,
+		.cha_24bpp_mode = !!dt->force_24bpp_mode,
+		.chb_24bpp_mode = !!dt->force_24bpp_mode,
+		.cha_24bpp_format1 = !!dt->force_24bpp_format1,
+		.chb_24bpp_format1 =  !!dt->force_24bpp_format1,
 
-		.cha_lvds_vocm = 0,
-		.chb_lvds_vocm = 0,
-		.cha_lvds_vod_swing = 0,
-		.chb_lvds_vod_swing = 0,
+		.cha_lvds_vocm = !!(dt->lvds_vocm & 0x02),
+		.chb_lvds_vocm = !!(dt->lvds_vocm & 0x01),
+		.cha_lvds_vod_swing = dt->lvds_vod_swing_cha,
+		.chb_lvds_vod_swing = dt->lvds_vod_swing_chb,
 
-		.even_odd_swap = 0,
-		.cha_reverse_lvds = 0,
-		.chb_reverse_lvds = 0,
-		.cha_lvds_term = 1, /* terminate */
-		.chb_lvds_term = 1,
+		.even_odd_swap = !!(dt->lvds_even_odd_swap),
+		.cha_reverse_lvds = !!(dt->lvds_reverse & 0x02),
+		.chb_reverse_lvds = !!(dt->lvds_reverse & 0x01),
+		.cha_lvds_term = !!(dt->lvds_term & 0x02),
+		.chb_lvds_term = !!(dt->lvds_term & 0x01),
+
+		.cha_lvds_cm_adjust = dt->lvds_cm_adjust_cha,
+		.chb_lvds_cm_adjust = dt->lvds_cm_adjust_chb,	
 
 		.cha_active_line_length = mode->hdisplay,
 		.chb_active_line_length = 0,
 		
-		.cha_sync_delay = (u16)self->config->sync_delay,
+		.cha_sync_delay = (u16)dt->sync_delay,
 		.chb_sync_delay = 0,
 		
 		.cha_hsync_pulse_width = mode->hsync_end - mode->hsync_start,
@@ -650,7 +675,9 @@ static void sn65dsi85_apply_mode(struct sn65dsi85_device *self,
 			     | ((regs.chb_reverse_lvds & 0x01) << 4)
 			     | ((regs.cha_lvds_term & 0x01) << 1)
 			     | ((regs.chb_lvds_term & 0x01) << 0));
-	write_dsi85(i2c,  DSI85_LVDS_ADJUST, 0 ); /* TPG only */
+	write_dsi85(i2c,  DSI85_LVDS_ADJUST, 
+		    	     ((regs.cha_lvds_cm_adjust & 0x03) << 4)
+	 		    | ((regs.chb_lvds_cm_adjust & 0x03) << 0));
 	
 	/* ------- Dimensions ------- */
 	write_dsi85(i2c,  DSI85_CHA_LINE_LEN_LO, 
